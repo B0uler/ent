@@ -2,7 +2,7 @@
     "app_title": "Legacy Texture Base",
     "welcome_message": "Welcome!",
     "search_title": "Search the texture database.",
-    "search_by_path": "Search by path:",
+    "search_by_text": "Search by text:",
     "filter_by_tags": "Filter by tags:",
     "find_button": "Find",
     "searching_spinner": "Searching...",

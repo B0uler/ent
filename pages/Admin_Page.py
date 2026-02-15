@@ -10,8 +10,8 @@ from code.db_helpers import (
     get_db_connection, 
     get_table_names, get_records, global_search_records, 
     get_record_by_id, update_record, delete_record, get_all_tags, 
-    add_new_tag, update_tag, delete_tag, get_image_as_base64,
-    get_all_users, DB_FILE
+    add_new_tag, update_tag, delete_tag,
+    get_all_users, DB_FILE, BASE_URL
 )
 from code.i18n import t, language_selector
 from code.ftp_helpers import upload_file_to_ftp, FTP_IMG_DIR
@@ -151,7 +151,7 @@ def db_management_tab():
                         st.experimental_rerun()
                     except Exception as e:
                         st.error(t('db_restore_error').format(error=e))
-                if c2.button(t('cancel_button'), key=f"cancel_restore_{selected_backup}"):
+                if c2.form_submit_button(t('cancel_button')):
                     st.session_state.confirming_restore = None
                     st.rerun()
 
@@ -198,10 +198,11 @@ else:
             if record:
                 with st.form(key=f"edit_form_{record['rowid']}"):
                     st.subheader(f"{t('edit_form_title')} `{record['Путь']}`")
-                    if record['Фото']:
-                        b64_image = get_image_as_base64(record['Фото'])
-                        if b64_image: 
-                            st.markdown(f'<div class="edit-img-container"><img src="data:image/png;base64,{b64_image}"></div>', unsafe_allow_html=True)
+                    
+                    image_path = record['Фото_thumb'] if 'Фото_thumb' in record.keys() and record['Фото_thumb'] else record['Фото']
+                    if image_path:
+                        image_url = image_path if image_path.startswith('http') else BASE_URL + image_path
+                        st.markdown(f'<div class="edit-img-container"><img src="{image_url}"></div>', unsafe_allow_html=True)
                     
                     comment = st.text_area(t('edit_form_comment'), record['Комментарий'] or "")
                     all_tags_suggestions = get_all_tags()
@@ -210,11 +211,10 @@ else:
                     selected_tags = st.multiselect(t('edit_form_tags'), options=all_tags_suggestions, default=current_tags)
                     
                     uploaded_file = None
-                    if is_admin: # Только админ видит загрузчик файлов
+                    if is_admin:
                         uploaded_file = st.file_uploader(t('edit_form_photo'))
 
-                    # Кнопки в зависимости от роли
-                    save_col, detach_col, cancel_col = None, None, None # Initialize to None
+                    save_col, detach_col, cancel_col = None, None, None
                     if is_admin:
                         save_col, detach_col, cancel_col = st.columns(3)
                     else:
@@ -222,23 +222,28 @@ else:
 
                     if save_col.form_submit_button(t('save_button')):
                         tags_to_save = ",".join(selected_tags)
-                        photo_path = record['Фото'] # По умолчанию оставляем старое фото
+                        photo_url = record['Фото']
+                        thumb_url = record['Фото_thumb'] if 'Фото_thumb' in record.keys() and record['Фото_thumb'] else None
 
                         if is_admin and uploaded_file:
-                            remote_dir = os.path.join(FTP_IMG_DIR, os.path.dirname(record['Путь'])).replace("\\", "/")
-                            remote_path = os.path.join(remote_dir, uploaded_file.name).replace("\\", "/")
-                            if upload_file_to_ftp(uploaded_file, remote_path):
-                                photo_path = remote_path
-                                st.success("File uploaded to FTP successfully!")
+                            ftp_dir = os.path.dirname(record['Путь']).replace("\\", "/")
+                            ftp_path = os.path.join(FTP_IMG_DIR, ftp_dir, uploaded_file.name)
+                            
+                            new_ftp_path, new_thumb_ftp_path = upload_file_to_ftp(uploaded_file, ftp_path)
+                            
+                            if new_ftp_path:
+                                photo_url = BASE_URL + new_ftp_path
+                                thumb_url = BASE_URL + new_thumb_ftp_path if new_thumb_ftp_path else None
+                                st.success("File uploaded successfully!")
                             else:
-                                st.error("Failed to upload file to FTP.")
+                                st.error("Failed to upload file.")
                         
-                        update_record(editing_info['table'], record['rowid'], comment, tags_to_save, photo_path)
+                        update_record(editing_info['table'], record['rowid'], comment, tags_to_save, photo_url, thumb_url)
                         st.session_state.editing_record_info = None
                         st.rerun()
 
                     if is_admin and detach_col and detach_col.form_submit_button(t('detach_button')):
-                        update_record(editing_info['table'], record['rowid'], comment, record['tags'], '')
+                        update_record(editing_info['table'], record['rowid'], comment, record['tags'], '', '')
                         st.session_state.editing_record_info = None
                         st.rerun()
                         
@@ -249,19 +254,13 @@ else:
             st.header(t('tab_records'))
             c1, c2 = st.columns([1, 2])
             table_options = [t('all_tables')] + get_table_names()
-            sel_table_idx = table_options.index(st.session_state.get('selected_table', t('all_tables'))) if st.session_state.get('selected_table', t('all_tables')) in table_options else 0
-            selected_table = c1.selectbox(t('table_header_table'), table_options, index=sel_table_idx)
-            search_query = c2.text_input(t('search_by_path'), st.session_state.get('search_query', ''))
-            if selected_table != st.session_state.get('selected_table') or search_query != st.session_state.get('search_query'):
-                st.session_state.update({'selected_table': selected_table, 'search_query': search_query, 'current_page': 1})
-                st.rerun()
-
+            selected_table = c1.selectbox(t('table_header_table'), table_options)
+            search_query = c2.text_input(t('search_by_text'))
+            
             all_records = []
             if selected_table == t('all_tables'):
-                if search_query:
-                    all_records = global_search_records(search_query)
-                else:
-                    st.info(t('enter_query_global_search'))
+                if search_query: all_records = global_search_records(search_query)
+                else: st.info(t('enter_query_global_search'))
             else:
                 all_records = get_records(selected_table, search_query)
 
@@ -277,9 +276,11 @@ else:
                 records_to_display = all_records[start_idx:end_idx]
 
                 st.write(f"{t('records_found')} {total_records}")
+                
                 cols_def = [2, 5, 2, 3, 2, 1]
                 if is_admin:
                     cols_def.append(1)
+                
                 cols = st.columns(cols_def)
                 cols[0].subheader(t('table_header_table'))
                 cols[1].subheader(t('table_header_path'))
@@ -290,16 +291,14 @@ else:
                 deleting_info = st.session_state.get('deleting_record_info')
                 for r in records_to_display:
                     row_cols = st.columns(cols_def)
-
                     row_cols[0].write(r['source_table'])
                     row_cols[1].markdown(f"`{r['Путь']}`")
                     row_cols[2].write(r['Подфайл'] or '')
                     row_cols[3].write(r['Комментарий'] or '')
-
-                    if r['Фото']:
-                        b64_image = get_image_as_base64(r['Фото'])
-                        if b64_image:
-                            row_cols[4].markdown(f'<div class="img-container-admin"><img src="data:image/png;base64,{b64_image}"></div>', unsafe_allow_html=True)
+                    image_path = r['Фото_thumb'] if 'Фото_thumb' in r.keys() and r['Фото_thumb'] else r['Фото']
+                    if image_path:
+                        image_url = image_path if image_path.startswith('http') else BASE_URL + image_path
+                        row_cols[4].markdown(f'<div class="img-container-admin"><img src="{image_url}"></div>', unsafe_allow_html=True)
                     else:
                         row_cols[4].markdown('<div class="img-container-admin">---</div>', unsafe_allow_html=True)
 
@@ -309,7 +308,7 @@ else:
 
                     if is_admin:
                         if deleting_info and deleting_info['rowid'] == r['rowid']:
-                            row_cols[5].write(t('are_you_sure')) 
+                            row_cols[6].write(t('are_you_sure')) 
                             if row_cols[6].button(t('confirm_delete_button'), key=f"del_confirm_{r['rowid']}"):
                                 delete_record(deleting_info['table'], deleting_info['rowid'])
                                 st.session_state.deleting_record_info = None
@@ -324,7 +323,7 @@ else:
                 p2.write(f"{t('pagination_page')} {current_page} {t('pagination_of')} {total_pages}")
                 if p3.button(t('pagination_next'), disabled=current_page>=total_pages): st.session_state.current_page+=1; st.rerun()
 
-    with tabs[1]: # Tags
+    with tabs[1]:
         st.header(t('tag_management_title'))
         
         if is_admin:
@@ -388,7 +387,7 @@ else:
             st.divider()
 
     if is_admin:
-        with tabs[2]: # User Management
+        with tabs[2]:
             role_management_tab()
-        with tabs[3]: # DB Management
+        with tabs[3]:
             db_management_tab()

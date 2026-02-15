@@ -4,7 +4,7 @@ import sys
 
 # --- Импорты и настройка пути ---
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
-from code.db_helpers import init_db, get_all_tags, search_public, get_image_as_base64, BASE_DIR
+from code.db_helpers import init_db, get_all_tags, search_public, BASE_URL
 from code.i18n import t, language_selector
 from code.auth import check_password, add_user
 
@@ -53,7 +53,7 @@ st.write(t('search_title'))
 
 all_tags = get_all_tags()
 c1, c2 = st.columns([2, 1])
-search_query = c1.text_input(t('search_by_path'), st.session_state.get('main_search_query', ''))
+search_query = c1.text_input(t('search_by_text'), st.session_state.get('main_search_query', ''))
 selected_tags = c2.multiselect(t('filter_by_tags'), options=all_tags, default=st.session_state.get('main_selected_tags', []))
 
 if st.button(t('find_button')):
@@ -86,14 +86,14 @@ if search_results:
         row_cols[1].markdown(f"`{r['Путь']}`")
         row_cols[2].write(r['Подфайл'] or '')
         row_cols[3].write(r['Комментарий'] or '')
-        if r['Фото']:
-            b64_image = get_image_as_base64(r['Фото'])
-            if b64_image:
-                row_cols[4].markdown(f'<div class="img-container"><img src="data:image/png;base64,{b64_image}"></div>', unsafe_allow_html=True)
-            else:
-                row_cols[4].markdown('<div class="img-container">---</div>', unsafe_allow_html=True)
+        
+        image_path = r['Фото_thumb'] if 'Фото_thumb' in r.keys() and r['Фото_thumb'] else r['Фото']
+        if image_path:
+            image_url = image_path if image_path.startswith('http') else BASE_URL + image_path
+            row_cols[4].markdown(f'<div class="img-container"><img src="{image_url}"></div>', unsafe_allow_html=True)
         else:
             row_cols[4].markdown('<div class="img-container">---</div>', unsafe_allow_html=True)
+            
         row_cols[5].write(r['tags'] or '')
         st.divider()
 

@@ -1,11 +1,11 @@
 import sqlite3
 import os
 import streamlit as st
-import base64
-from code.ftp_helpers import download_file_from_ftp, delete_file_from_ftp
+from code.ftp_helpers import delete_file_from_ftp
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DB_FILE = 'app.db'
+BASE_URL = "http://ent.test-handyhost.ru/"
 
 def get_db_connection():
     """Возвращает соединение с базой данных с row_factory и поддержкой многопоточности."""
@@ -42,7 +42,9 @@ def get_records(table_name, search_query=""):
     with get_db_connection() as conn:
         sql_query = f'SELECT "{table_name}" as source_table, rowid, * FROM "{table_name}"'
         params = []
-        if search_query: sql_query += ' WHERE "Путь" LIKE ?'; params.append(f'%{search_query}%')
+        if search_query:
+            sql_query += ' WHERE "Путь" LIKE ? OR "Комментарий" LIKE ? OR "Подфайл" LIKE ?'
+            params.extend([f'%{search_query}%'] * 3)
         return conn.cursor().execute(sql_query, params).fetchall()
 
 def global_search_records(search_query):
@@ -50,9 +52,14 @@ def global_search_records(search_query):
     with get_db_connection() as conn:
         table_names = get_table_names()
         if not table_names: return []
-        union_parts = [f'SELECT "{table}" as source_table, rowid, * FROM "{table}" WHERE "Путь" LIKE ?' for table in table_names]
+        
+        search_clause = '"Путь" LIKE ? OR "Комментарий" LIKE ? OR "Подфайл" LIKE ?'
+        
+        union_parts = [f'SELECT "{table}" as source_table, rowid, * FROM "{table}" WHERE {search_clause}' for table in table_names]
         sql_query = " UNION ALL ".join(union_parts)
-        params = [f'%{search_query}%'] * len(table_names)
+        
+        params = [f'%{search_query}%'] * 3 * len(table_names)
+        
         return conn.cursor().execute(sql_query, params).fetchall()
 
 def search_public(text_query="", tag_list=[]):
@@ -63,9 +70,11 @@ def search_public(text_query="", tag_list=[]):
 
         where_clauses = []
         params_for_one_table = []
+        
         if text_query:
-            where_clauses.append('"Путь" LIKE ?')
-            params_for_one_table.append(f'%{text_query}%')
+            where_clauses.append('("Путь" LIKE ? OR "Комментарий" LIKE ? OR "Подфайл" LIKE ?)')
+            params_for_one_table.extend([f'%{text_query}%'] * 3)
+
         if tag_list:
             for tag in tag_list:
                 where_clauses.append('"," || tags || "," LIKE ?')
@@ -81,7 +90,10 @@ def search_public(text_query="", tag_list=[]):
             select_parts.append(query)
         
         final_sql = " UNION ALL ".join(select_parts)
-        final_params = params_for_one_table * len(table_names)
+        
+        final_params = []
+        for _ in range(len(table_names)):
+            final_params.extend(params_for_one_table)
 
         if not final_sql or not final_params: return []
 
@@ -95,8 +107,10 @@ def update_record(table_name, rowid, comment, tags, photo_path):
 
 def delete_record(table_name, rowid):
     record = get_record_by_id(table_name, rowid)
-    if record and record['Фото']:
-        delete_file_from_ftp(record['Фото'])
+    if record and record['Фото'] and record['Фото'].startswith(BASE_URL):
+        ftp_path = record['Фото'].replace(BASE_URL, "")
+        delete_file_from_ftp(ftp_path)
+            
     with get_db_connection() as conn: conn.cursor().execute(f'DELETE FROM "{table_name}" WHERE rowid = ?', (rowid,)); conn.commit()
 
 def get_all_tags():
@@ -142,10 +156,3 @@ def update_user(username, new_name=None, new_admin_status=None, new_username=Non
 
 def delete_user(username):
     with get_db_connection() as conn: conn.cursor().execute("DELETE FROM users WHERE username = ?", (username,)); conn.commit()
-
-def get_image_as_base64(path):
-    """Downloads an image from FTP and returns it as a base64 string."""
-    image_data = download_file_from_ftp(path)
-    if image_data:
-        return base64.b64encode(image_data.getvalue()).decode()
-    return None

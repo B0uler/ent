@@ -1,47 +1,63 @@
 from ftplib import FTP_TLS, error_perm
 import io
 import os
+import streamlit as st
+from PIL import Image
 
-# FTP Configuration (formerly from config.py)
-# В целях безопасности, рекомендуется хранить учетные данные
-# не в коде, а в переменных окружения или другом безопасном месте.
+# FTP Configuration
 FTP_HOST = "135.181.181.70"
 FTP_PORT = 21
 FTP_USER = "u162459_project"
 FTP_PASS = "jX1hC4wO4n"
 FTP_IMG_DIR = "img"
+THUMBNAIL_DIR = "thumbnails" # Директория для миниатюр
+THUMBNAIL_SIZE = (200, 200)
 
-def get_ftp_connection():
-    """Создает и возвращает FTP-соединение с использованием TLS."""
+def get_ftp_session():
+    """
+    Получает существующее FTP-соединение из состояния сессии или создает новое.
+    """
+    if 'ftp_session' in st.session_state and st.session_state.ftp_session is not None:
+        try:
+            st.session_state.ftp_session.voidcmd("NOOP")
+            return st.session_state.ftp_session
+        except (error_perm, EOFError, OSError):
+            st.session_state.ftp_session = None
+
     try:
         ftp = FTP_TLS()
         ftp.connect(FTP_HOST, FTP_PORT)
         ftp.login(FTP_USER, FTP_PASS)
-        ftp.prot_p() # Включаем шифрование для канала данных
+        ftp.prot_p()
+        st.session_state.ftp_session = ftp
         return ftp
     except Exception as e:
         print(f"FTP connection failed: {e}")
+        st.session_state.ftp_session = None
         return None
+
+def close_ftp_session():
+    """Закрывает FTP-соединение в состоянии сессии, если оно существует."""
+    if 'ftp_session' in st.session_state and st.session_state.ftp_session is not None:
+        try:
+            st.session_state.ftp_session.quit()
+        except Exception as e:
+            print(f"Error quitting FTP connection: {e}")
+        finally:
+            st.session_state.ftp_session = None
 
 def create_ftp_directory_recursive(ftp, path):
     """
     Рекурсивно создает директории на FTP-сервере.
-    path - абсолютный путь на FTP-сервере, который нужно создать.
     """
-    # Нормализуем путь для FTP (используем /)
     path = path.replace("\\", "/")
     parts = [p for p in path.split('/') if p]
-
-    # Возвращаемся в корень, чтобы строить путь с нуля
     try:
         ftp.cwd('/')
-    except error_perm:
-        print("Warning: Could not change to FTP root directory. Assuming current directory is root.")
     except Exception as e:
         print(f"Error changing to FTP root: {e}")
         return False
 
-    # Последовательно создаем директории
     for part in parts:
         try:
             ftp.cwd(part)
@@ -55,40 +71,55 @@ def create_ftp_directory_recursive(ftp, path):
     return True
 
 def upload_file_to_ftp(file_object, remote_path):
-    """Загружает файл в FTP."""
-    ftp = get_ftp_connection()
+    """
+    Загружает файл и его миниатюру в FTP, используя сессионное соединение.
+    Возвращает кортеж (путь_к_оригиналу, путь_к_миниатюре).
+    """
+    ftp = get_ftp_session()
     if not ftp:
-        return False
+        return None, None
+
     try:
-        # Нормализуем путь и извлекаем директорию
+        # --- Загрузка оригинала ---
         remote_path = remote_path.replace("\\", "/")
         remote_dir = os.path.dirname(remote_path)
-
-        # Создаем все необходимые директории рекурсивно
         if not create_ftp_directory_recursive(ftp, remote_dir):
-            print(f"Failed to ensure remote directory structure for {remote_dir}")
-            return False
+            return None, None
         
-        # create_ftp_directory_recursive оставляет нас в конечной директории (remote_dir),
-        # поэтому дополнительный переход ftp.cwd(remote_dir) не нужен.
-
         file_object.seek(0)
         ftp.storbinary(f'STOR {os.path.basename(remote_path)}', file_object)
-        return True
+
+        # --- Создание и загрузка миниатюры ---
+        file_object.seek(0)
+        img = Image.open(file_object)
+        img.thumbnail(THUMBNAIL_SIZE)
+        
+        thumb_buffer = io.BytesIO()
+        img.save(thumb_buffer, format='PNG') # Сохраняем в формате PNG
+        thumb_buffer.seek(0)
+
+        # Создаем путь для миниатюры
+        thumb_dir = os.path.join(THUMBNAIL_DIR, remote_dir).replace("\\", "/")
+        thumb_path = os.path.join(thumb_dir, os.path.basename(remote_path))
+        
+        if not create_ftp_directory_recursive(ftp, thumb_dir):
+            return remote_path, None # Возвращаем хотя бы путь к оригиналу
+
+        ftp.storbinary(f'STOR {os.path.basename(thumb_path)}', thumb_buffer)
+
+        return remote_path, thumb_path
+
     except Exception as e:
         print(f"FTP upload failed: {e}")
-        return False
-    finally:
-        ftp.quit()
+        return None, None
 
 def download_file_from_ftp(remote_path):
-    """Скачивает файл с FTP в виде байтового объекта."""
-    ftp = get_ftp_connection()
+    """Скачивает файл с FTP, используя сессионное соединение."""
+    ftp = get_ftp_session()
     if not ftp:
         print("DEBUG: download_file_from_ftp - No FTP connection.")
         return None
     try:
-        # Нормализуем путь для FTP, заменяя бэкслэши и обеспечивая абсолютный путь от корня.
         full_remote_path = remote_path.replace("\\", "/")
         if not full_remote_path.startswith('/'):
             full_remote_path = '/' + full_remote_path
@@ -105,21 +136,13 @@ def download_file_from_ftp(remote_path):
     except Exception as e:
         print(f"DEBUG: FTP download failed for {full_remote_path}: {e}")
         return None
-    finally:
-        if ftp:
-            try:
-                ftp.quit()
-                print("DEBUG: FTP connection quit.")
-            except Exception as e:
-                print(f"DEBUG: Error quitting FTP connection: {e}")
 
 def delete_file_from_ftp(remote_path):
-    """Удаляет файл с FTP."""
-    ftp = get_ftp_connection()
+    """Удаляет файл с FTP, используя сессионное соединение."""
+    ftp = get_ftp_session()
     if not ftp:
         return False
     try:
-        # Нормализуем путь для FTP, заменяя бэкслэши и обеспечивая абсолютный путь от корня.
         full_remote_path = remote_path.replace("\\", "/")
         if not full_remote_path.startswith('/'):
             full_remote_path = '/' + full_remote_path
@@ -128,6 +151,4 @@ def delete_file_from_ftp(remote_path):
         return True
     except Exception as e:
         print(f"FTP delete failed: {e}")
-        return None
-    finally:
-        ftp.quit()
+        return False

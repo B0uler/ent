@@ -2,7 +2,7 @@
     "app_title": "Legacy Texture Base",
     "welcome_message": "Добро пожаловать!",
     "search_title": "Поиск по базе текстур.",
-    "search_by_path": "Поиск по пути:",
+    "search_by_text": "Поиск по тексту:",
     "filter_by_tags": "Фильтр по тэгам:",
     "find_button": "Найти",
     "searching_spinner": "Выполняется поиск...",
