@@ -192,6 +192,17 @@ else:
     tabs = st.tabs(tab_definitions)
 
     with tabs[0]: # Records
+        # We need the table options for initialization and for the widget
+        table_options = [t('all_tables')] + get_table_names()
+
+        # Initialize state for search and pagination if not already set
+        if 'admin_selected_table' not in st.session_state:
+            st.session_state.admin_selected_table = table_options[0]
+        if 'admin_search_query' not in st.session_state:
+            st.session_state.admin_search_query = ''
+        if 'current_page' not in st.session_state:
+            st.session_state.current_page = 1
+        
         editing_info = st.session_state.get('editing_record_info')
         if editing_info:
             record = get_record_by_id(editing_info['table'], editing_info['rowid'])
@@ -253,8 +264,20 @@ else:
         else:
             st.header(t('tab_records'))
             c1, c2 = st.columns([1, 2])
-            table_options = [t('all_tables')] + get_table_names()
-            selected_table = c1.selectbox(t('table_header_table'), table_options, key='admin_selected_table')
+            
+            # The selectbox value is now controlled by the session state
+            # We must ensure the index is correct on each run
+            try:
+                current_table_index = table_options.index(st.session_state.admin_selected_table)
+            except ValueError:
+                current_table_index = 0 # Default to 'all_tables'
+
+            selected_table = c1.selectbox(
+                t('table_header_table'), 
+                table_options, 
+                index=current_table_index, 
+                key='admin_selected_table'
+            )
             search_query = c2.text_input(t('search_by_text'), key='admin_search_query')
             
             all_records = []
