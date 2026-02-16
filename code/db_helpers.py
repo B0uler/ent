@@ -102,8 +102,8 @@ def search_public(text_query="", tag_list=[]):
 def get_record_by_id(table_name, rowid):
     with get_db_connection() as conn: return conn.cursor().execute(f'SELECT rowid, * FROM "{table_name}" WHERE rowid = ?', (rowid,)).fetchone()
 
-def update_record(table_name, rowid, comment, tags, photo_path):
-    with get_db_connection() as conn: conn.cursor().execute(f'UPDATE "{table_name}" SET "Комментарий" = ?, "tags" = ?, "Фото" = ? WHERE rowid = ?', (comment, tags, photo_path, rowid)); conn.commit()
+def update_record(table_name, rowid, comment, tags, photo_path, thumb_path):
+    with get_db_connection() as conn: conn.cursor().execute(f'UPDATE "{table_name}" SET "Комментарий" = ?, "tags" = ?, "Фото" = ?, "Фото_thumb" = ? WHERE rowid = ?', (comment, tags, photo_path, thumb_path, rowid)); conn.commit()
 
 def delete_record(table_name, rowid):
     record = get_record_by_id(table_name, rowid)
