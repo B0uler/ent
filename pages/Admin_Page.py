@@ -254,8 +254,8 @@ else:
             st.header(t('tab_records'))
             c1, c2 = st.columns([1, 2])
             table_options = [t('all_tables')] + get_table_names()
-            selected_table = c1.selectbox(t('table_header_table'), table_options)
-            search_query = c2.text_input(t('search_by_text'))
+            selected_table = c1.selectbox(t('table_header_table'), table_options, key='admin_selected_table')
+            search_query = c2.text_input(t('search_by_text'), key='admin_search_query')
             
             all_records = []
             if selected_table == t('all_tables'):
